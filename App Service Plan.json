@@ -1,0 +1,39 @@
+az appservice plan create --resource-group  DSA_R_Forecast_Demo --name DSAShinyAppPlan --sku FREE --is-linux
+
+{
+  "freeOfferExpirationTime": null,
+  "geoRegion": "UK South",
+  "hostingEnvironmentProfile": null,
+  "hyperV": false,
+  "id": "/subscriptions/fb48fc2d-62a8-40ec-8995-887df3ebf5aa/resourceGroups/DSA_R_Forecast_Demo/providers/Microsoft.Web/serverfarms/DSAShinyAppPlan",
+  "isSpot": false,
+  "isXenon": false,
+  "kind": "linux",
+  "location": "uksouth",
+  "maximumElasticWorkerCount": 1,
+  "maximumNumberOfWorkers": 0,
+  "name": "DSAShinyAppPlan",
+  "numberOfSites": 0,
+  "perSiteScaling": false,
+  "provisioningState": "Succeeded",
+  "reserved": true,
+  "resourceGroup": "DSA_R_Forecast_Demo",
+  "sku": {
+    "capabilities": null,
+    "capacity": 1,
+    "family": "U",
+    "locations": null,
+    "name": "U1",
+    "size": "U1",
+    "skuCapacity": null,
+    "tier": "LinuxFree"
+  },
+  "spotExpirationTime": null,
+  "status": "Ready",
+  "subscription": "fb48fc2d-62a8-40ec-8995-887df3ebf5aa",
+  "tags": null,
+  "targetWorkerCount": 0,
+  "targetWorkerSizeId": 0,
+  "type": "Microsoft.Web/serverfarms",
+  "workerTierName": null
+}

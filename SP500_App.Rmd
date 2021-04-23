@@ -1,0 +1,521 @@
+---
+title: "S&P 500 Forecast Dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    css: css/styles-dark.css
+    logo: img/Hitachi_Solutions_Logo.png
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+
+library(flexdashboard)
+library(shinyWidgets)
+library(shinyjs)
+library(shiny)
+
+# Core
+library(tidyverse)
+library(tidyquant)
+library(DT)
+library(broom)
+library(umap)
+
+# Interactive Visualizations
+library(plotly)
+
+# Modeling
+library(parsnip)
+library(timetk)
+library(xgboost)
+
+# Database
+library(config)
+library(odbc)
+library(DBI)
+
+# Sources
+source("demand_forecast.R")
+
+```
+
+```{css}
+
+.bootstrap-switch, .bootstrap-switch-handle-on,
+.bootstrap-switch, .bootstrap-switch-handle-off,
+.bootstrap-switch, .bootstrap-switch-label {
+  display: inline-block;
+  vertical-align: baseline;
+}
+
+```
+
+```{r Data, echo = FALSE}
+
+dw <- config::get("datawarehouse")
+
+con <- dbConnect(odbc::odbc(),
+   Driver = dw$driver,
+   Server = dw$server,
+   UID    = dw$uid,
+   PWD    = dw$pwd,
+   Port   = dw$port,
+   Database = dw$database
+)
+
+processed_data_tbl <- dbGetQuery(con, "SELECT symbol, company, sector, date, price, diff, pct_return 
+                                       FROM [dbo].[processed_data_tbl]
+                                       WHERE date >= '2017-01-01'")
+dbDisconnect(con)
+
+```
+
+Column {.sidebar}
+--------------------------------------------------
+
+```{r}
+
+useShinyjs(rmd = TRUE)
+
+dateRangeInput(
+  inputId = "date_range", 
+  label   = h4("Date Range"),
+  start   = min(processed_data_tbl$date), 
+  end     = max(processed_data_tbl$date), 
+  min     = min(processed_data_tbl$date), 
+  max     = max(processed_data_tbl$date), 
+  startview = "month")
+
+shinyWidgets::pickerInput(
+  inputId  = "picker_company", 
+  label    = h4("Company"), 
+  choices  = unique(processed_data_tbl$company) %>% sort(), 
+  selected = unique(processed_data_tbl$company) %>% sort(), 
+  multiple = TRUE,
+  options  = list(
+    `actions-box` = TRUE,
+    size = 10,
+    `selected-text-format` = "count > 3"
+  )
+)
+
+shinyWidgets::pickerInput(
+
+  inputId  = "picker_sector",
+  label    = h4("Sector"),
+  choices  = unique(processed_data_tbl$sector) %>% sort(),
+  selected = unique(processed_data_tbl$sector) %>% sort(),
+  multiple = TRUE,
+  options  = list(
+    `actions-box` = TRUE,
+    size = 10,
+    `selected-text-format` = "count > 3"
+  )
+
+)
+
+# Forecast Mode ----
+
+br()
+hr()
+br()
+
+h4("Forecast Mode")
+switchInput(
+  inputId     = "forecast_mode",
+  value       = FALSE,
+  onStatus    = "success",
+  offStatus   = "primary",
+  onLabel     = "On",
+  offLabel    = "Off",
+  handleWidth = 80, 
+  labelWidth  = 80, 
+  inline      = TRUE, 
+  width       = "150px")
+
+conditionalPanel(
+  condition = "input.forecast_mode == 1",
+  numericInput(inputId = "n_future",
+               label   = "Forecast Horizon",
+               value   = 24,
+               min     = 1))
+
+# Apply Buttons ----
+
+br()
+hr()
+br()
+
+actionButton(inputId = "apply", label = "Apply", icon = icon("play"))
+
+actionButton(inputId = "reset", label = "Reset", icon = icon("sync"))
+
+observeEvent(eventExpr = input$reset, handlerExpr = {
+  
+  updatePickerInput(
+    session  = session, 
+    inputId  = "picker_company", 
+    selected = unique(processed_data_tbl$company) %>% sort())
+  
+  updatePickerInput(
+    session  = session,
+    inputId  = "picker_sector",
+    selected = unique(processed_data_tbl$sector) %>% sort())
+  
+  updateDateRangeInput(
+    session  = session, 
+    inputId  = "date_range", 
+    start    = min(processed_data_tbl$date), 
+    end      = max(processed_data_tbl$date))
+  
+  updateRadioGroupButtons(
+    session  = session, 
+    inputId  = "time_unit", 
+    selected = "month")
+  
+  updateSwitchInput(
+    session  = session,
+    inputId  = "forecast_mode",
+    value    = FALSE)
+  
+  updateNumericInput(
+    session  = session,
+    inputId  = "n_future",
+    value    = 24)
+  
+  shinyjs::delay(ms = 300, expr = {
+    shinyjs::click(id = "apply")
+  })
+  
+})
+
+# Download Forecast Data Button
+
+br()
+hr()
+br()
+
+splitLayout(wellPanel(downloadButton("downloadData")),
+            dataTableOutput("ForecastedData"))
+
+output$downloadData <- downloadHandler(
+
+ filename =  "ForecastedData.csv",
+
+  content = function(file) {
+
+      write.csv(time_plot_predictions_tbl(), file = file)
+
+    },
+
+  contentType="text/csv"
+
+)
+
+```
+
+TimeSeries Analysis {data-icon="fab fa-r-project"}
+==================================================
+
+```{r}
+
+processed_data_filtered_tbl <- eventReactive(
+  eventExpr = input$apply, 
+                                             
+  valueExpr = {
+  
+    processed_data_tbl %>%
+      
+      filter(date %>% between(left  = input$date_range[1], 
+                              right = input$date_range[2])) %>%
+      
+      filter(company %in% input$picker_company) %>% 
+      
+      filter(sector %in% input$picker_sector)
+  },
+  
+  ignoreNULL = FALSE
+  
+)
+
+```
+
+Row {data-height=150}
+---------------------------------------------------------------
+
+```{r}
+
+summary_values_tbl <- reactive({
+
+  processed_data_filtered_tbl() %>%
+    
+    filter(date >= last(date) - days(1)) %>%
+    
+    select(company, sector, date, price, diff) %>% 
+    
+    summarize(
+      health_metric = round(mean(diff) , digits = 2)) 
+    
+})
+
+```
+
+### Stock Health
+
+```{r}
+
+renderValueBox({
+
+  valueBox(
+    value   = summary_values_tbl()$health_metric %>% scales::dollar(scale = 1e+0),
+    caption = "Mean Adjusted Daily Stock Return Rate (change from previous day)",
+    icon    = "fa-hand-holding-usd",
+    color   = case_when(summary_values_tbl()$health_metric < -0 ~ "danger",
+                        TRUE ~ "success"))
+
+})
+
+```
+
+Row {data-height=850}
+---------------------------------------------------------------
+
+### Stock Value By Sector
+
+```{r}
+
+geo_plot_tbl <- reactive({
+
+        cat_1_tbl <- processed_data_tbl %>% 
+            filter(date == max(date)) %>% 
+            rename(labels = company,
+                   parent = sector) %>% 
+            select(-c(date)) %>% 
+            select(parent, labels, price) %>%
+            distinct(labels, parent, price)
+        
+        cat_2_tbl <- cat_1_tbl %>% 
+            group_by(parent) %>%
+            summarise(price = sum(price)) %>% 
+            rename(labels = parent) %>% 
+            mutate(parent = "Sector")
+        
+        cat_3_tbl <- tibble(price = sum(cat_2_tbl$price),
+                            labels = "Sector",
+                            parent = "")
+                
+        geo_plot_tbl <- rbind(cat_1_tbl, cat_2_tbl, cat_3_tbl)
+
+})
+
+```
+
+```{r}
+
+output$plotly_1 <- renderPlotly(expr = {
+  
+        geo_plot_tbl() %>% 
+            plot_ly(
+                type          = 'treemap',
+                labels        = ~ labels,
+                parents       = ~ parent,
+                values        = ~ price,
+                text          = ~ labels,
+                textinfo      = "label+percent parent",
+                hovertemplate = "Adjusted Daily Stock Price: %{value:$,.0f}
+                                 Company: %{text}<extra></extra>",
+                 marker        = list(colorscale = "Reds"))
+
+})
+
+plotlyOutput(outputId = "plotly_1")
+
+```
+
+### Over Time
+
+```{r}
+
+shinyWidgets::radioGroupButtons(
+  inputId  = "time_unit", 
+  label    = "Time Unit", 
+  choices  = c("D" = "day", "W" = "week", "M" = "month", "Q" = "quarter", "Y" = "year"), 
+  selected = "month", 
+  status   = "success", 
+  justified = TRUE, 
+  checkIcon = list(
+    yes = icon("ok", lib = "glyphicon"), 
+    no  = NULL
+    )
+)
+
+#observeEvent - watch choices button and fire code when action (click) takes place with 300ms delay.
+
+observeEvent(eventExpr = input$time_unit, {
+  
+  if (input$forecast_mode) {
+    
+    delay(300, click(id = "apply"))
+    
+  }
+  
+}) 
+
+observeEvent(eventExpr = input$forecast_mode, {
+    
+    delay(300, click(id = "apply"))
+  
+  }, 
+
+once = TRUE) 
+
+```
+
+```{r}
+
+time_plot_tbl <- reactive({
+  
+  processed_data_filtered_tbl() %>% 
+    aggregate_time_series(time_unit = input$time_unit)
+  
+})
+
+time_plot_predictions_tbl <- eventReactive(eventExpr = input$apply,{
+  
+  if (input$forecast_mode) {
+    
+    time_plot_tbl() %>% 
+      generate_forecast(n_future = input$n_future, seed = 123)
+    
+  }
+  
+}) 
+
+output$plotly_2 <- renderPlotly({
+
+if (input$forecast_mode) {
+  
+    p <- time_plot_predictions_tbl() %>% 
+    plot_forecast()
+  
+   }
+  
+  else {
+    
+    p <- time_plot_tbl() %>% 
+      plot_time_series()
+    
+  }
+  
+  p %>% 
+    layout(margin = list(b = 200))
+    
+}) 
+
+# %>% bindCache(input$forecast_mode) - method to cache individual render operations to save compute resources and improve performance.
+
+plotlyOutput(outputId = "plotly_2")
+  
+```
+
+2D Customer Segmentation {data-icon="fab fa-python"}
+=====================================
+
+Row
+--------------------------------------------------
+    
+### This analysis is using unsupervised machine learning model to establish a method of UMAP 2D projection with K-Means cluster assignment of customer-item matrix. The interactive plot classifies companies based on how their stocks trade using their daily stock returns (percentage movement from one day to the next). This analysis can help to determine which companies are similar to each other in various segments of the market and help target customer clusters appropriately. In order to apply the projection, first the data needs to be standardized or normalized. To standardize adjusted stock price the dollar value is converted to daily returns (percent change from previous day) using the following formula. 
+
+$$ 
+return_{daily} = \frac{price_{i}-price_{i-1}}{price_{i-1}}
+$$
+```{r, echo=FALSE}
+
+sp_500_index_tbl <- read_rds("sp_500_index_tbl.rds")
+
+sp_500_daily_returns_tbl <- processed_data_tbl %>% 
+    select(symbol, date, pct_return) %>% 
+    filter(date >= ymd("2020-01-01"))
+
+stock_date_matrix_tbl <- sp_500_daily_returns_tbl %>%
+    spread(key = date, value = pct_return, fill = 0)
+
+```
+
+```{r}
+
+kmeans_obj <- stock_date_matrix_tbl %>%
+    select(-symbol) %>%
+    kmeans(centers = 4, nstart = 20)
+
+kmeans_mapper <- function(center = 3) {
+    stock_date_matrix_tbl %>%
+        select(-symbol) %>%
+        kmeans(centers = center, nstart = 20)
+}
+
+k_means_mapped_tbl <- tibble(centers = 1:30) %>%
+    mutate(k_means = centers %>% map(kmeans_mapper)) %>%
+    mutate(glance  = k_means %>% map(glance))
+
+```
+
+```{r, echo=FALSE}
+
+umap_results <- stock_date_matrix_tbl %>%
+    select(-symbol) %>%
+    umap()
+
+umap_results_tbl <- umap_results$layout %>%
+    as_tibble() %>%
+    bind_cols(stock_date_matrix_tbl %>% select(symbol)) 
+
+```
+
+```{r}
+
+get_kmeans <- function(k = 3) {
+    
+    k_means_obj <- k_means_mapped_tbl %>%
+        filter(centers == k) %>%
+        pull(k_means) %>%
+        pluck(1)
+    
+    umap_kmeans_results_tbl <- k_means_obj %>% 
+        augment(stock_date_matrix_tbl) %>%
+        select(symbol, .cluster) %>%
+        left_join(umap_results_tbl, by = "symbol") %>%
+        left_join(sp_500_index_tbl %>% select(symbol, company, sector),
+                  by = "symbol")
+    
+    return(umap_kmeans_results_tbl)
+}
+
+plot_cluster <- function(k = 3) {
+    
+    g <- get_kmeans(k) %>%
+        
+        mutate(label_text = str_glue("Stock: {symbol}
+                                     Company: {company}
+                                     Sector: {sector}")) %>%
+        
+        ggplot(aes(V1, V2, color = .cluster, text = label_text)) +
+        geom_point(alpha = 0.5) +
+        theme_tq() +
+        
+    scale_color_tq()
+    
+    g %>%
+        ggplotly(tooltip = "text")
+    
+}
+
+```
+
+```{r}
+
+plot_cluster(k = 8)
+
+```

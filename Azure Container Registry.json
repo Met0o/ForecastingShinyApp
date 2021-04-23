@@ -1,0 +1,53 @@
+az acr create -n DSAShinyImages -g DSA_R_Forecast_Demo --sku Basic 
+
+{
+  "adminUserEnabled": false,
+  "anonymousPullEnabled": false,
+  "creationDate": "2021-04-08T08:16:41.118448+00:00",
+  "dataEndpointEnabled": false,
+  "dataEndpointHostNames": [],
+  "encryption": {
+    "keyVaultProperties": null,
+    "status": "disabled"
+  },
+  "id": "/subscriptions/fb48fc2d-62a8-40ec-8995-887df3ebf5aa/resourceGroups/DSA_R_Forecast_Demo/providers/Microsoft.ContainerRegistry/registries/DSAShinyImages",
+  "identity": null,
+  "location": "uksouth",
+  "loginServer": "dsashinyimages.azurecr.io",
+  "name": "DSAShinyImages",
+  "networkRuleBypassOptions": "AzureServices",
+  "networkRuleSet": null,
+  "policies": {
+    "quarantinePolicy": {
+      "status": "disabled"
+    },
+    "retentionPolicy": {
+      "days": 7,
+      "lastUpdatedTime": "2021-04-08T08:16:45.849859+00:00",
+      "status": "disabled"
+    },
+    "trustPolicy": {
+      "status": "disabled",
+      "type": "Notary"
+    }
+  },
+  "privateEndpointConnections": [],
+  "provisioningState": "Succeeded",
+  "publicNetworkAccess": "Enabled",
+  "resourceGroup": "DSA_R_Forecast_Demo",
+  "sku": {
+    "name": "Basic",
+    "tier": "Basic"
+  },
+  "status": null,
+  "systemData": {
+    "createdAt": "2021-04-08T08:16:41.118448+00:00",
+    "createdBy": "msimeonov@hsdyn.com",
+    "createdByType": "User",
+    "lastModifiedAt": "2021-04-08T08:16:41.118448+00:00",
+    "lastModifiedBy": "msimeonov@hsdyn.com",
+    "lastModifiedByType": "User"
+  "tags": {},
+  "type": "Microsoft.ContainerRegistry/registries",
+  "zoneRedundancy": "Disabled"
+}
